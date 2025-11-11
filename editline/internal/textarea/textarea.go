@@ -66,6 +66,8 @@ type KeyMap struct {
 	CapitalizeWordForward key.Binding
 
 	TransposeCharacterBackward key.Binding
+
+	ToggleOverwriteMode key.Binding
 }
 
 // DefaultKeyMap is the default set of key bindings for navigating and acting
@@ -95,6 +97,7 @@ var DefaultKeyMap = KeyMap{
 	UppercaseWordForward:  key.NewBinding(key.WithKeys("alt+u"), key.WithHelp("alt+u", "uppercase word forward")),
 
 	TransposeCharacterBackward: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "transpose character backward")),
+	ToggleOverwriteMode:        key.NewBinding(key.WithKeys("insert", "alt+o"), key.WithHelp("M-o/ins", "toggle overwrite")),
 }
 
 // LineInfo is a helper for keeping track of line information regarding
@@ -260,6 +263,9 @@ type Model struct {
 	// focus indicates whether user input focus should be on this input
 	// component. When false, ignore keyboard input and hide the cursor.
 	focus bool
+
+	// overwrite indicates whether overwrite mode is currently enabled.
+	overwrite bool
 
 	// Cursor column.
 	col int
@@ -814,14 +820,20 @@ func (m *Model) capitalizeRight() {
 // LineInfo returns the number of characters from the start of the
 // (soft-wrapped) line and the (soft-wrapped) line width.
 func (m Model) LineInfo() LineInfo {
-	grid := m.memoizedWrap(m.value[m.row], m.width)
+	return m.LineInfoAt(m.row, m.col)
+}
+
+// LineInfoAt computes the LineInfo at the specified row/column.
+// The caller is responsible for keeping row/col within bounds.
+func (m Model) LineInfoAt(row, col int) LineInfo {
+	grid := m.memoizedWrap(m.value[row], m.width)
 
 	// Find out which line we are currently on. This can be determined by the
 	// m.col and counting the number of runes that we need to skip.
 	var counter int
 	for i, line := range grid {
 		// We've found the line that we are on
-		if counter+len(line) == m.col && i+1 < len(grid) {
+		if counter+len(line) == col && i+1 < len(grid) {
 			// We wrap around to the next line if we are at the end of the
 			// previous line so that we can be at the very beginning of the row
 			return LineInfo{
@@ -829,16 +841,16 @@ func (m Model) LineInfo() LineInfo {
 				ColumnOffset: 0,
 				Height:       len(grid),
 				RowOffset:    i + 1,
-				StartColumn:  m.col,
+				StartColumn:  col,
 				Width:        len(grid[i+1]),
 				CharWidth:    uniseg.StringWidth(string(line)),
 			}
 		}
 
-		if counter+len(line) >= m.col {
+		if counter+len(line) >= col {
 			return LineInfo{
-				CharOffset:   uniseg.StringWidth(string(line[:max(0, m.col-counter)])),
-				ColumnOffset: m.col - counter,
+				CharOffset:   uniseg.StringWidth(string(line[:max(0, col-counter)])),
+				ColumnOffset: col - counter,
 				Height:       len(grid),
 				RowOffset:    i,
 				StartColumn:  counter,
@@ -1060,9 +1072,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.capitalizeRight()
 		case key.Matches(msg, m.KeyMap.TransposeCharacterBackward):
 			m.transposeLeft()
+		case key.Matches(msg, m.KeyMap.ToggleOverwriteMode):
+			m.overwrite = !m.overwrite
 
 		default:
-			m.insertRunesFromUserInput(msg.Runes)
+			if !m.overwrite {
+				m.insertRunesFromUserInput(msg.Runes)
+			} else {
+				runes := m.san().Sanitize(msg.Runes)
+				for _, r := range runes {
+					m.overwriteRune(r)
+				}
+			}
 		}
 
 	case pasteMsg:

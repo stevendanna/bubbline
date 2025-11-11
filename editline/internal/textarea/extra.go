@@ -39,6 +39,48 @@ func (m *Model) ClearLine() {
 	m.lastCharOffset = 0
 }
 
+// InsertNewline inserts a newline character at the cursor.
+func (m *Model) InsertNewline() {
+	if m.MaxHeight > 0 && len(m.value) >= m.MaxHeight {
+		return
+	}
+	m.col = clamp(m.col, 0, len(m.value[m.row]))
+	m.splitLine(m.row, m.col)
+}
+
+// DeleteCharacterForward deletes the character at the cursor.
+func (m *Model) DeleteCharacterForward() {
+	if len(m.value[m.row]) > 0 && m.col < len(m.value[m.row]) {
+		m.value[m.row] = append(m.value[m.row][:m.col], m.value[m.row][m.col+1:]...)
+	}
+	if m.col >= len(m.value[m.row]) {
+		m.mergeLineBelow(m.row)
+	}
+}
+
+// DeleteCharactersBackward deletes n characters before the cursor.
+func (m *Model) DeleteCharactersBackward(n int) {
+	for n > 0 {
+		m.col = clamp(m.col, 0, len(m.value[m.row]))
+		if m.col <= 0 {
+			m.mergeLineAbove(m.row)
+			n--
+			continue
+		}
+		if len(m.value[m.row]) > 0 {
+			d := n
+			if d > len(m.value[m.row]) {
+				d = len(m.value[m.row])
+			}
+			m.value[m.row] = append(m.value[m.row][:max(0, m.col-d)], m.value[m.row][m.col:]...)
+			if m.col > 0 {
+				m.SetCursor(m.col - d)
+			}
+			n -= d
+		}
+	}
+}
+
 // MoveTo moves the cursor to the specified position.
 func (m *Model) MoveTo(row, col int) {
 	m.row = clamp(row, 0, len(m.value)-1)
@@ -86,6 +128,18 @@ func (m Model) LogicalHeight() int {
 		logicalHeight += li.Height
 	}
 	return logicalHeight
+}
+
+// overwriteRune overwrites the rune at the cursor position.
+func (m *Model) overwriteRune(r rune) {
+	// If we're at the end of the line, or if the input rune is a
+	// newline, simply insert it.  Otherwise, overwrite.
+	if r == '\n' || r == '\r' || (m.col >= len(m.value[m.row])) {
+		m.InsertRune(r)
+		return
+	}
+	m.value[m.row][m.col] = r
+	m.SetCursor(m.col + 1)
 }
 
 // Debug returns debug details about the state of the model.

@@ -4,10 +4,12 @@ package textarea
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
+	"unsafe"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/cursor"
@@ -178,13 +180,42 @@ func (s Style) computedText() lipgloss.Style {
 // so that it can be hashed and memoized.
 type line struct {
 	runes []rune
-	width int
+	width int64
 }
 
 // Hash returns a hash of the line.
 func (w line) Hash() string {
-	v := fmt.Sprintf("%s:%d", string(w.runes), w.width)
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(v)))
+	h := sha256.New()
+	blockSize := h.BlockSize()
+	buf := make([]byte, blockSize)
+
+	bufWritten := 0
+	for i := range w.runes {
+		binary.LittleEndian.PutUint32(buf[bufWritten:], uint32(w.runes[i]))
+		bufWritten += 4
+		if bufWritten == blockSize {
+			_, err := h.Write(buf)
+			if err != nil {
+				panic(err)
+			}
+			bufWritten = 0
+		}
+	}
+	if bufWritten > 0 {
+		_, err := h.Write(buf[:bufWritten])
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	binary.LittleEndian.PutUint64(buf, uint64(w.width))
+	if _, err := h.Write(buf[:8]); err != nil {
+		panic(err)
+	}
+	buf = h.Sum(buf[:0])
+	// NOTE(review): This unsafe use gets rid of the final allocation to
+	// construct the string, bringing this function to 1 allocation.
+	return unsafe.String(unsafe.SliceData(buf), len(buf))
 }
 
 // Model is the Bubble Tea model for this text area element.
@@ -1325,7 +1356,7 @@ func Blink() tea.Msg {
 }
 
 func (m Model) memoizedWrap(runes []rune, width int) [][]rune {
-	input := line{runes: runes, width: width}
+	input := line{runes: runes, width: int64(width)}
 	if v, ok := m.cache.Get(input); ok {
 		return v
 	}

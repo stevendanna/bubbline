@@ -1,6 +1,8 @@
 package textarea
 
 import (
+	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
 	"unicode"
@@ -1721,6 +1723,58 @@ func TestView(t *testing.T) {
 				t.Fatalf(format, tt.want.cursorRow, tt.want.cursorCol, cursorRow, cursorCol)
 			}
 		})
+	}
+}
+
+const printables = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+const printablesWithSpace = printables + " "
+
+func makeRandomRuneArray(length int, spaces bool) []rune {
+	data := make([]rune, 0, length)
+	for i := 0; i < length; i++ {
+		if spaces {
+			data = append(data, rune(printables[rand.Intn(len(printablesWithSpace))]))
+		} else {
+			data = append(data, rune(printables[rand.Intn(len(printables))]))
+		}
+	}
+	return data
+}
+
+func BenchmarkHash(b *testing.B) {
+	for _, len := range []int{8, 16, 32, 64, 128, 1024, 4096, 8192, 7, 15, 31, 63, 9, 17, 33, 65} {
+		l := line{
+			runes: makeRandomRuneArray(len, false),
+			width: 80,
+		}
+		b.ResetTimer()
+
+		b.Run(fmt.Sprintf("%d/Hash", len), func(b *testing.B) {
+			expected := l.Hash()
+			b.ResetTimer()
+			for range b.N {
+				if l.Hash() != expected {
+					b.Fatal("unexpected empty hash")
+				}
+			}
+		})
+	}
+
+}
+
+func BenchmarkWrap(b *testing.B) {
+	length := 4096
+	data := make([]rune, 0, length)
+	for i := 0; i < length; i++ {
+		data = append(data, rune(printables[rand.Intn(len(printables))]))
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		wrapped := wrap(data, 80)
+		if l := len(wrapped); l == 0 {
+			b.Fatalf("unexpected wrapped length: %d", l)
+		}
 	}
 }
 
